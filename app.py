@@ -1,49 +1,36 @@
 import streamlit as st
 import os
-import json # <-- เพิ่ม import นี้
+import json
 from datetime import datetime
 from google.cloud import firestore
+from google.oauth2 import service_account # <-- Import ที่สำคัญ
 
-# --- 1. การตั้งค่าหน้าเว็บและ GCP (เวอร์ชัน Hybrid ที่เข้ากันได้กับ Cloud) ---
+# --- 1. การตั้งค่าหน้าเว็บและ GCP (สำหรับ Cloud เท่านั้น) ---
 st.set_page_config(page_title="AI Story Factory", page_icon="🏭", layout="wide")
 
 @st.cache_resource
 def connect_to_firestore():
     """
-    สร้างการเชื่อมต่อกับ Firestore โดยลองใช้ Secrets ก่อน, ถ้าไม่เจอก็ใช้ไฟล์ Local
+    สร้างการเชื่อมต่อกับ Firestore โดยใช้ Streamlit Secrets เท่านั้น
     """
     try:
-        # วิธีที่ 1: พยายามใช้ Streamlit Secrets (สำหรับตอน Deploy)
-        # จะมองหา Header [gcp]
-        if "gcp" in st.secrets:
-            project_id = st.secrets["gcp"]["project_id"]
-            creds_json_str = st.secrets["gcp"]["credentials_json"]
-            
-            # สร้างไฟล์ credentials ชั่วคราวจาก secret string
-            with open("gcp_creds.json", "w") as f:
-                f.write(creds_json_str)
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp_creds.json"
-            
-            db = firestore.Client(project=project_id)
-            return db, None
-
-        # วิธีที่ 2: ถ้าไม่เจอ Secrets, ให้ใช้ไฟล์ Local (สำหรับรันบนเครื่องตัวเอง)
-        else:
-            local_key_path = "youtubeubload.json"
-            if not os.path.exists(local_key_path):
-                return None, f"ไม่พบไฟล์ Key ที่: {local_key_path}"
-            
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = local_key_path
-            
-            with open(local_key_path, 'r') as f:
-                creds = json.load(f)
-                project_id = creds.get('project_id')
-
-            db = firestore.Client(project=project_id)
-            return db, None
-            
+        # สร้าง credentials object จาก st.secrets โดยตรง
+        creds_dict = dict(st.secrets.gcp_service_account)
+        credentials = service_account.Credentials.from_service_account_info(creds_dict)
+        project_id = creds_dict.get("project_id")
+        
+        db = firestore.Client(project=project_id, credentials=credentials)
+        return db, None
+        
     except Exception as e:
-        return None, f"เกิดข้อผิดพลาดในการเชื่อมต่อ: {e}"
+        error_details = (
+            "Could not connect to Firestore using Streamlit Secrets. "
+            "Please check the following:\n"
+            "1. You have a [gcp_service_account] section in your secrets.\n"
+            "2. All keys from your JSON file are correctly copied into the secrets.\n"
+            f"3. Underlying error: {e}"
+        )
+        return None, error_details
 
 # เชื่อมต่อฐานข้อมูล
 db, error_message = connect_to_firestore()
@@ -68,7 +55,7 @@ def create_story_project(topic: str, style: str):
         st.error(f"เกิดข้อผิดพลาดในการสร้างโปรเจกต์: {e}")
         return None
 
-@st.cache_data(ttl=60) # Cache ผลลัพธ์ไว้ 60 วินาทีเพื่อลดการอ่านจาก DB
+@st.cache_data(ttl=60)
 def fetch_projects():
     """ดึงข้อมูลโปรเจกต์ทั้งหมดจาก Firestore"""
     if not db:
@@ -88,7 +75,6 @@ def fetch_projects():
         return []
 
 # --- 3. ส่วน UI ของ Streamlit ---
-
 st.title("🏭 AI Story Factory - Command Center")
 
 if not db:
@@ -98,19 +84,18 @@ else:
     with st.expander("📝 **Create a New Story Order**", expanded=True):
         with st.form("story_order_form", clear_on_submit=True):
             st.subheader("Order Details")
-            topic = st.text_input("Topic:", "a dragon who is afraid of heights")
-            style = st.text_input("Style:", "a comedy adventure")
+            topic = st.text_input("Topic:", "a brave knight and a friendly dragon")
+            style = st.text_input("Style:", "an epic fantasy")
             
             submitted = st.form_submit_button("🚀 SUBMIT ORDER TO FACTORY")
             
             if submitted:
                 if topic:
-                    with st.spinner("Submitting order to the production line..."):
+                    with st.spinner("Submitting order..."):
                         project_id = create_story_project(topic, style)
                         if project_id:
-                            st.success(f"Order submitted successfully! Project ID: {project_id}")
+                            st.success(f"Order submitted! Project ID: {project_id}")
                             st.balloons()
-                            # Clear cache to show new project immediately
                             st.cache_data.clear()
                 else:
                     st.warning("Please enter a topic.")
@@ -121,24 +106,20 @@ else:
     st.header("📊 Production Line Monitoring")
 
     if st.button("🔄 Refresh Project List"):
-        # Clear cache to force a re-fetch from Firestore
         st.cache_data.clear()
         st.rerun()
 
-    # ดึงข้อมูลและแสดงผล
     projects = fetch_projects()
     
     if not projects:
-        st.info("No projects in the production line yet. Create a new order above!")
+        st.info("No projects in the production line yet.")
     else:
         for project in projects:
             with st.container(border=True):
                 col1, col2 = st.columns([3, 1])
-                
                 with col1:
                     st.subheader(f'🎬 {project.get("topic", "N/A")}')
                     st.caption(f'Style: {project.get("style", "N/A")} | Project ID: {project.get("id")}')
-                
                 with col2:
                     status = project.get("status", "unknown")
                     if status == "completed":
@@ -148,13 +129,11 @@ else:
                     else:
                         st.info(f"⏳ {status.upper()}")
 
-                # แสดงวิดีโอถ้าเสร็จแล้ว
                 final_url = project.get("final_video_url")
                 if final_url:
-                    st.info("Click the button below to watch your video. The link is temporary and will expire.")
+                    st.info("Your video is ready! The link expires in 1 hour.")
                     st.link_button("🎬 **Watch Your Video**", final_url)
                 
-                # แสดงรายละเอียดเพิ่มเติมถ้าล้มเหลว
                 error_msg = project.get("error_message")
                 if error_msg:
                     with st.expander("View Error Details"):
