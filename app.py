@@ -3,25 +3,47 @@ import os
 from datetime import datetime
 from google.cloud import firestore
 
-# --- 1. การตั้งค่าหน้าเว็บและ GCP ---
+# --- 1. การตั้งค่าหน้าเว็บและ GCP (เวอร์ชัน Hybrid) ---
 st.set_page_config(page_title="AI Story Factory", page_icon="🏭", layout="wide")
-
-# ใช้วิธีอ่านไฟล์ตรง (ยังคงปลอดภัยสำหรับการรันบนเครื่องตัวเอง)
-GCP_KEY_FILE_PATH = "E:\\streamlit-story-app\\youtubeubload.json"
-GCP_PROJECT_ID = "youtubeubload"
 
 @st.cache_resource
 def connect_to_firestore():
     """
-    สร้างการเชื่อมต่อกับ Firestore และ cache ไว้เพื่อไม่ให้เชื่อมต่อใหม่ทุกครั้ง
+    สร้างการเชื่อมต่อกับ Firestore โดยลองใช้ Secrets ก่อน, ถ้าไม่เจอก็ใช้ไฟล์ Local
     """
     try:
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = GCP_KEY_FILE_PATH
-        if not os.path.exists(GCP_KEY_FILE_PATH):
-            return None, f"ไม่พบไฟล์ Key ที่: {GCP_KEY_FILE_PATH}"
-        
-        db = firestore.Client(project=GCP_PROJECT_ID)
-        return db, None
+        # วิธีที่ 1: พยายามใช้ Streamlit Secrets (สำหรับตอน Deploy)
+        if "gcp_service_account" in st.secrets:
+            creds_dict = st.secrets["gcp_service_account"]
+            project_id = creds_dict.get("project_id")
+            
+            # สร้างไฟล์ credentials ชั่วคราวจาก secret
+            with open("gcp_creds.json", "w") as f:
+                f.write(str(creds_dict).replace("'", '"')) # แก้ไข format เล็กน้อย
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp_creds.json"
+            
+            db = firestore.Client(project=project_id)
+            st.success("Connected to Firestore using Streamlit Secrets.")
+            return db, None
+
+        # วิธีที่ 2: ถ้าไม่เจอ Secrets, ให้ใช้ไฟล์ Local (สำหรับรันบนเครื่องตัวเอง)
+        else:
+            local_key_path = "youtubeubload.json" # <--- ตรวจสอบว่าชื่อไฟล์นี้ถูกต้อง
+            if not os.path.exists(local_key_path):
+                return None, f"ไม่พบไฟล์ Key ที่: {local_key_path}"
+            
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = local_key_path
+            
+            # อ่าน project_id จากไฟล์โดยตรง
+            import json
+            with open(local_key_path, 'r') as f:
+                creds = json.load(f)
+                project_id = creds.get('project_id')
+
+            db = firestore.Client(project=project_id)
+            st.info("Connected to Firestore using local key file.")
+            return db, None
+            
     except Exception as e:
         return None, f"เกิดข้อผิดพลาดในการเชื่อมต่อ: {e}"
 
