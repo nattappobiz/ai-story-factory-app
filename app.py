@@ -1,45 +1,46 @@
 import streamlit as st
 import os
+import json # <-- เพิ่ม import นี้
 from datetime import datetime
 from google.cloud import firestore
 
-# --- 1. การตั้งค่าหน้าเว็บและ GCP (เวอร์ชัน Hybrid) ---
+# --- 1. การตั้งค่าหน้าเว็บและ GCP (เวอร์ชัน Hybrid ที่เข้ากันได้กับ Cloud) ---
 st.set_page_config(page_title="AI Story Factory", page_icon="🏭", layout="wide")
 
+@st.cache_resource
 def connect_to_firestore():
     """
     สร้างการเชื่อมต่อกับ Firestore โดยลองใช้ Secrets ก่อน, ถ้าไม่เจอก็ใช้ไฟล์ Local
     """
     try:
         # วิธีที่ 1: พยายามใช้ Streamlit Secrets (สำหรับตอน Deploy)
-        if "gcp" in st.secrets:
-            project_id = st.secrets["gcp"]["project_id"]
-            creds_json_str = st.secrets["gcp"]["credentials_json"]
+        # จะมองหา Header [gcp_service_account] ใน secrets.toml
+        if "gcp_service_account" in st.secrets:
+            # แปลง st.secrets object ให้เป็น Python dict ธรรมดา
+            creds_dict = dict(st.secrets.gcp_service_account)
+            project_id = creds_dict.get("project_id")
             
-            # สร้างไฟล์ credentials ชั่วคราวจาก secret string
+            # สร้างไฟล์ credentials ชั่วคราวจาก dict
             with open("gcp_creds.json", "w") as f:
-                f.write(creds_json_str)
+                json.dump(creds_dict, f) # ใช้ json.dump เพื่อเขียน dict อย่างถูกต้อง
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp_creds.json"
             
             db = firestore.Client(project=project_id)
-            # st.success("Connected to Firestore using Streamlit Secrets.") # เอาข้อความออกเพื่อให้หน้าจอสะอาด
             return db, None
 
         # วิธีที่ 2: ถ้าไม่เจอ Secrets, ให้ใช้ไฟล์ Local (สำหรับรันบนเครื่องตัวเอง)
         else:
-            local_key_path = "youtubeubload.json"
+            local_key_path = "youtubeubload.json" # <--- ตรวจสอบว่าชื่อไฟล์นี้ถูกต้อง
             if not os.path.exists(local_key_path):
                 return None, f"ไม่พบไฟล์ Key ที่: {local_key_path}"
             
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = local_key_path
             
-            import json
             with open(local_key_path, 'r') as f:
                 creds = json.load(f)
                 project_id = creds.get('project_id')
 
             db = firestore.Client(project=project_id)
-            # st.info("Connected to Firestore using local key file.")
             return db, None
             
     except Exception as e:
@@ -68,6 +69,7 @@ def create_story_project(topic: str, style: str):
         st.error(f"เกิดข้อผิดพลาดในการสร้างโปรเจกต์: {e}")
         return None
 
+@st.cache_data(ttl=60) # Cache ผลลัพธ์ไว้ 60 วินาทีเพื่อลดการอ่านจาก DB
 def fetch_projects():
     """ดึงข้อมูลโปรเจกต์ทั้งหมดจาก Firestore"""
     if not db:
@@ -109,6 +111,8 @@ else:
                         if project_id:
                             st.success(f"Order submitted successfully! Project ID: {project_id}")
                             st.balloons()
+                            # Clear cache to show new project immediately
+                            st.cache_data.clear()
                 else:
                     st.warning("Please enter a topic.")
 
@@ -118,8 +122,9 @@ else:
     st.header("📊 Production Line Monitoring")
 
     if st.button("🔄 Refresh Project List"):
-        # ไม่ต้องทำอะไร Streamlit จะ rerun เองเมื่อปุ่มถูกกด
-        pass
+        # Clear cache to force a re-fetch from Firestore
+        st.cache_data.clear()
+        st.rerun()
 
     # ดึงข้อมูลและแสดงผล
     projects = fetch_projects()
@@ -129,22 +134,28 @@ else:
     else:
         for project in projects:
             with st.container(border=True):
-                # ... (โค้ดแสดง topic, style, status เหมือนเดิม) ...
+                col1, col2 = st.columns([3, 1])
                 
+                with col1:
+                    st.subheader(f'🎬 {project.get("topic", "N/A")}')
+                    st.caption(f'Style: {project.get("style", "N/A")} | Project ID: {project.get("id")}')
+                
+                with col2:
+                    status = project.get("status", "unknown")
+                    if status == "completed":
+                        st.success(f"✅ COMPLETED")
+                    elif "failed" in status:
+                        st.error(f"❌ FAILED")
+                    else:
+                        st.info(f"⏳ {status.upper()}")
+
+                # แสดงวิดีโอถ้าเสร็จแล้ว
                 final_url = project.get("final_video_url")
                 if final_url:
-                    # --- ส่วนที่เปลี่ยนแปลง ---
-                    # เราจะไม่ใช้ st.video อีกต่อไป เพราะมันอาจจะเล่น Signed URL ไม่ได้
-                    # st.video(final_url) 
-                    
-                    st.success("🎉 Your video is ready!")
-                    st.info("Click the button below to open and watch your video in a new tab. The link will expire in 1 hour.")
-                    
-                    # สร้างปุ่มลิงก์ที่ชัดเจน
+                    st.info("Click the button below to watch your video. The link is temporary and will expire.")
                     st.link_button("🎬 **Watch Your Video**", final_url)
-                    # ---------------------------
                 
-                # (ทางเลือก) แสดงรายละเอียดเพิ่มเติมถ้าล้มเหลว
+                # แสดงรายละเอียดเพิ่มเติมถ้าล้มเหลว
                 error_msg = project.get("error_message")
                 if error_msg:
                     with st.expander("View Error Details"):
