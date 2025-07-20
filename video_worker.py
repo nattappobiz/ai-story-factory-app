@@ -3,6 +3,7 @@ import time
 import requests
 from google.cloud import firestore, storage
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
+import datetime
 
 # --- 1. การตั้งค่า ---
 print("🚀 Starting Video Compiler Worker...")
