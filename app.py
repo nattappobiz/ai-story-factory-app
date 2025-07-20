@@ -6,42 +6,40 @@ from google.cloud import firestore
 # --- 1. การตั้งค่าหน้าเว็บและ GCP (เวอร์ชัน Hybrid) ---
 st.set_page_config(page_title="AI Story Factory", page_icon="🏭", layout="wide")
 
-@st.cache_resource
 def connect_to_firestore():
     """
     สร้างการเชื่อมต่อกับ Firestore โดยลองใช้ Secrets ก่อน, ถ้าไม่เจอก็ใช้ไฟล์ Local
     """
     try:
         # วิธีที่ 1: พยายามใช้ Streamlit Secrets (สำหรับตอน Deploy)
-        if "gcp_service_account" in st.secrets:
-            creds_dict = st.secrets["gcp_service_account"]
-            project_id = creds_dict.get("project_id")
+        if "gcp" in st.secrets:
+            project_id = st.secrets["gcp"]["project_id"]
+            creds_json_str = st.secrets["gcp"]["credentials_json"]
             
-            # สร้างไฟล์ credentials ชั่วคราวจาก secret
+            # สร้างไฟล์ credentials ชั่วคราวจาก secret string
             with open("gcp_creds.json", "w") as f:
-                f.write(str(creds_dict).replace("'", '"')) # แก้ไข format เล็กน้อย
+                f.write(creds_json_str)
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp_creds.json"
             
             db = firestore.Client(project=project_id)
-            st.success("Connected to Firestore using Streamlit Secrets.")
+            # st.success("Connected to Firestore using Streamlit Secrets.") # เอาข้อความออกเพื่อให้หน้าจอสะอาด
             return db, None
 
         # วิธีที่ 2: ถ้าไม่เจอ Secrets, ให้ใช้ไฟล์ Local (สำหรับรันบนเครื่องตัวเอง)
         else:
-            local_key_path = "youtubeubload.json" # <--- ตรวจสอบว่าชื่อไฟล์นี้ถูกต้อง
+            local_key_path = "youtubeubload.json"
             if not os.path.exists(local_key_path):
                 return None, f"ไม่พบไฟล์ Key ที่: {local_key_path}"
             
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = local_key_path
             
-            # อ่าน project_id จากไฟล์โดยตรง
             import json
             with open(local_key_path, 'r') as f:
                 creds = json.load(f)
                 project_id = creds.get('project_id')
 
             db = firestore.Client(project=project_id)
-            st.info("Connected to Firestore using local key file.")
+            # st.info("Connected to Firestore using local key file.")
             return db, None
             
     except Exception as e:
