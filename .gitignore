@@ -14,3 +14,5 @@ gcp_creds.json
 
 # IDE settings
 .vscode/
+# Ignore the specific GCP service account key
+youtubeubload.json
