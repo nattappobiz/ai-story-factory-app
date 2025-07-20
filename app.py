@@ -14,15 +14,14 @@ def connect_to_firestore():
     """
     try:
         # วิธีที่ 1: พยายามใช้ Streamlit Secrets (สำหรับตอน Deploy)
-        # จะมองหา Header [gcp_service_account] ใน secrets.toml
-        if "gcp_service_account" in st.secrets:
-            # แปลง st.secrets object ให้เป็น Python dict ธรรมดา
-            creds_dict = dict(st.secrets.gcp_service_account)
-            project_id = creds_dict.get("project_id")
+        # จะมองหา Header [gcp]
+        if "gcp" in st.secrets:
+            project_id = st.secrets["gcp"]["project_id"]
+            creds_json_str = st.secrets["gcp"]["credentials_json"]
             
-            # สร้างไฟล์ credentials ชั่วคราวจาก dict
+            # สร้างไฟล์ credentials ชั่วคราวจาก secret string
             with open("gcp_creds.json", "w") as f:
-                json.dump(creds_dict, f) # ใช้ json.dump เพื่อเขียน dict อย่างถูกต้อง
+                f.write(creds_json_str)
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp_creds.json"
             
             db = firestore.Client(project=project_id)
@@ -30,7 +29,7 @@ def connect_to_firestore():
 
         # วิธีที่ 2: ถ้าไม่เจอ Secrets, ให้ใช้ไฟล์ Local (สำหรับรันบนเครื่องตัวเอง)
         else:
-            local_key_path = "youtubeubload.json" # <--- ตรวจสอบว่าชื่อไฟล์นี้ถูกต้อง
+            local_key_path = "youtubeubload.json"
             if not os.path.exists(local_key_path):
                 return None, f"ไม่พบไฟล์ Key ที่: {local_key_path}"
             
